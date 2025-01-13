@@ -10,23 +10,54 @@ import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.cio.*
 import io.ktor.client.plugins.*
+import io.ktor.client.plugins.auth.*
+import io.ktor.client.plugins.auth.providers.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.plugins.logging.*
 import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.*
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.nio.file.Files
 import kotlin.time.Duration.Companion.milliseconds
 
+@Serializable
+data class ApiResponse<T>(
+    val data: T? = null,
+    val error: ErrorResponse.Error? = null
+)
+
+@Serializable
+data class ErrorResponse(
+    val error: Error
+) {
+    @Serializable
+    data class Error(
+        val code: String,
+        val message: String,
+        val invalidToken: Boolean = false
+    )
+}
+
+@Serializable
+data class VercelFile(
+    val name: String,
+    val size: Long,
+    @SerialName("type")
+    val fileType: String
+)
+
 class VercelClientImpl(
     private val config: VercelConfig,
+    private val httpClient: HttpClient? = null,
     private val retryAttempts: Int = 3,
     private val retryDelay: Long = 1000
 ) : VercelClient {
-    private val client = HttpClient(CIO) {
+    private val client = (httpClient ?: HttpClient(CIO)).config {
         install(ContentNegotiation) {
             json(Json {
                 ignoreUnknownKeys = true
@@ -36,8 +67,14 @@ class VercelClientImpl(
         install(Logging) {
             level = LogLevel.INFO
         }
+        install(Auth) {
+            bearer {
+                loadTokens {
+                    BearerTokens(config.token, "")
+                }
+            }
+        }
         defaultRequest {
-            header("Authorization", "Bearer ${config.token}")
             contentType(ContentType.Application.Json)
         }
         install(HttpTimeout) {
@@ -48,13 +85,35 @@ class VercelClientImpl(
 
     override suspend fun getDeployment(deploymentId: String): VercelDeployment = withRetry {
         try {
-            client.get("${config.apiUrl}/v13/deployments/$deploymentId") {
+            val response = client.get("${config.apiUrl}/v13/deployments/$deploymentId") {
                 config.teamId?.let { parameter("teamId", it) }
-            }.body()
-        } catch (e: ClientRequestException) {
-            when (e.response.status) {
-                HttpStatusCode.Unauthorized -> throw VercelAuthenticationException(cause = e)
-                HttpStatusCode.NotFound -> throw VercelApiException("Deployment not found: $deploymentId", e)
+            }
+
+            when (response.status) {
+                HttpStatusCode.OK -> {
+                    val apiResponse = response.body<ApiResponse<VercelDeployment>>()
+                    apiResponse.data ?: throw VercelApiException(
+                        apiResponse.error?.message ?: "No deployment data returned"
+                    )
+                }
+                HttpStatusCode.Unauthorized -> {
+                    val apiResponse = response.body<ApiResponse<VercelDeployment>>()
+                    if (apiResponse.error?.invalidToken == true) {
+                        throw VercelAuthenticationException(apiResponse.error.message)
+                    }
+                    throw VercelAuthenticationException()
+                }
+                HttpStatusCode.NotFound -> throw VercelApiException("Deployment not found: $deploymentId")
+                else -> {
+                    val apiResponse = runCatching { response.body<ApiResponse<VercelDeployment>>() }.getOrNull()
+                    throw VercelApiException(
+                        apiResponse?.error?.message ?: "Failed to get deployment: ${response.status}"
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            when (e) {
+                is VercelAuthenticationException, is VercelApiException -> throw e
                 else -> throw VercelApiException("Failed to get deployment: ${e.message}", e)
             }
         }
@@ -67,11 +126,15 @@ class VercelClientImpl(
                 targetDir.mkdirs()
 
                 // Get deployment files list
-                val files = withRetry {
+                val response = withRetry {
                     client.get("${config.apiUrl}/v13/deployments/${deployment.id}/files") {
                         config.teamId?.let { parameter("teamId", it) }
-                    }.body<List<VercelFile>>()
+                    }.body<ApiResponse<List<VercelFile>>>()
                 }
+
+                val files = response.data ?: throw VercelApiException(
+                    response.error?.message ?: "No files data returned"
+                )
 
                 // Download each file with parallel processing
                 coroutineScope {
@@ -91,14 +154,30 @@ class VercelClientImpl(
 
     override suspend fun listDeployments(limit: Int): List<VercelDeployment> = withRetry {
         try {
-            client.get("${config.apiUrl}/v13/deployments") {
+            val response = client.get("${config.apiUrl}/v13/deployments") {
                 config.teamId?.let { parameter("teamId", it) }
                 parameter("limit", limit)
-            }.body<DeploymentResponse>().deployments
+            }.body<ApiResponse<List<VercelDeployment>>>()
+
+            response.data ?: throw VercelApiException(
+                response.error?.message ?: "No deployments data returned"
+            )
         } catch (e: ClientRequestException) {
             when (e.response.status) {
-                HttpStatusCode.Unauthorized -> throw VercelAuthenticationException(cause = e)
-                else -> throw VercelApiException("Failed to list deployments: ${e.message}", e)
+                HttpStatusCode.Unauthorized -> {
+                    val response = e.response.body<ApiResponse<List<VercelDeployment>>>()
+                    if (response.error?.invalidToken == true) {
+                        throw VercelAuthenticationException(response.error.message, e)
+                    }
+                    throw VercelAuthenticationException(cause = e)
+                }
+                else -> {
+                    val response = runCatching { e.response.body<ApiResponse<List<VercelDeployment>>>() }.getOrNull()
+                    throw VercelApiException(
+                        response?.error?.message ?: "Failed to list deployments: ${e.message}",
+                        e
+                    )
+                }
             }
         }
     }
@@ -124,6 +203,9 @@ class VercelClientImpl(
                 return block()
             } catch (e: Exception) {
                 lastException = e
+                if (e is VercelAuthenticationException) {
+                    throw e
+                }
                 if (attempt < retryAttempts - 1) {
                     delay((retryDelay * (attempt + 1)).milliseconds)
                 }
@@ -131,17 +213,4 @@ class VercelClientImpl(
         }
         throw lastException ?: VercelApiException("Operation failed after $retryAttempts attempts")
     }
-}
-
-@kotlinx.serialization.Serializable
-private data class DeploymentResponse(
-    val deployments: List<VercelDeployment>
-)
-
-@kotlinx.serialization.Serializable
-private data class VercelFile(
-    val name: String,
-    val size: Long,
-    @kotlinx.serialization.SerialName("type")
-    val fileType: String
-) 
+} 

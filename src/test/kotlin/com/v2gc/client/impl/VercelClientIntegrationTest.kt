@@ -2,8 +2,9 @@ package com.v2gc.client.impl
 
 import com.v2gc.client.exception.VercelAuthenticationException
 import com.v2gc.model.VercelConfig
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.*
 import org.junit.jupiter.api.*
+import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.nio.file.Path
@@ -95,16 +96,14 @@ class VercelClientIntegrationTest {
     }
 
     @Test
-    fun `should fail with invalid token`() {
+    fun `should fail with invalid token`() = runBlocking {
         // Given
         val invalidConfig = config.copy(token = "invalid-token")
         val invalidClient = VercelClientImpl(invalidConfig)
 
         // When/Then
         assertThrows<VercelAuthenticationException> {
-            runBlocking {
-                invalidClient.listDeployments(1)
-            }
+            invalidClient.listDeployments(1)
         }
     }
 

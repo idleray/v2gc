@@ -8,7 +8,9 @@ group = "com.v2gc"
 version = "1.0-SNAPSHOT"
 
 repositories {
-    mavenCentral()
+    maven(url = "https://maven.aliyun.com/repository/central")
+    maven(url = "https://maven.aliyun.com/repository/gradle-plugin")
+    maven(url = "https://maven.aliyun.com/repository/google")
 }
 
 dependencies {
@@ -19,6 +21,7 @@ dependencies {
     implementation("io.ktor:ktor-client-content-negotiation:$ktorVersion")
     implementation("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
     implementation("io.ktor:ktor-client-logging:$ktorVersion")
+    implementation("io.ktor:ktor-client-auth:$ktorVersion")
 
     // Git
     implementation("org.eclipse.jgit:org.eclipse.jgit:6.8.0.202311291450-r")
@@ -33,6 +36,9 @@ dependencies {
     // Testing
     testImplementation(kotlin("test"))
     testImplementation("io.mockk:mockk:1.13.8")
+    testImplementation("io.ktor:ktor-client-mock:$ktorVersion")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.9.2")
 }
 
 tasks.test {
@@ -50,13 +56,16 @@ val integrationTest by tasks.registering(Test::class) {
         includeTags("integration")
     }
 
-    // Load test.properties if it exists
-    val testPropertiesFile = file("src/test/resources/test.properties")
-    if (testPropertiesFile.exists()) {
-        val properties = java.util.Properties()
-        properties.load(testPropertiesFile.inputStream())
-        properties.forEach { (key, value) ->
-            systemProperty(key.toString(), value.toString())
+    doFirst {
+        // Load test.properties if it exists
+        val testPropertiesFile = file("src/test/resources/test.properties")
+        if (testPropertiesFile.exists()) {
+            testPropertiesFile.readLines()
+                .filter { it.isNotBlank() && !it.startsWith("#") }
+                .forEach { line ->
+                    val (key, value) = line.split("=", limit = 2)
+                    systemProperty(key.trim(), value.trim())
+                }
         }
     }
 
