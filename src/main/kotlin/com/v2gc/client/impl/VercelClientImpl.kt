@@ -27,28 +27,26 @@ import kotlin.time.Duration.Companion.milliseconds
 
 @Serializable
 data class ApiResponse<T>(
-    val data: T? = null,
-    val error: ErrorResponse.Error? = null
+    val deployment: T? = null,
+    val deployments: List<T>? = null,
+    val files: List<T>? = null,
+    val error: ErrorResponse? = null
 )
 
 @Serializable
 data class ErrorResponse(
-    val error: Error
-) {
-    @Serializable
-    data class Error(
-        val code: String,
-        val message: String,
-        val invalidToken: Boolean = false
-    )
-}
+    val code: String,
+    val message: String,
+    val invalidToken: Boolean = false
+)
 
 @Serializable
 data class VercelFile(
     val name: String,
     val size: Long,
     @SerialName("type")
-    val fileType: String
+    val fileType: String,
+    val children: List<VercelFile>? = null
 )
 
 class VercelClientImpl(
@@ -85,16 +83,14 @@ class VercelClientImpl(
 
     override suspend fun getDeployment(deploymentId: String): VercelDeployment = withRetry {
         try {
-            val response = client.get("${config.apiUrl}/v13/deployments/$deploymentId") {
+            val response = client.get("${config.apiUrl}/v6/deployments/$deploymentId") {
                 config.teamId?.let { parameter("teamId", it) }
             }
 
             when (response.status) {
                 HttpStatusCode.OK -> {
-                    val apiResponse = response.body<ApiResponse<VercelDeployment>>()
-                    apiResponse.data ?: throw VercelApiException(
-                        apiResponse.error?.message ?: "No deployment data returned"
-                    )
+                    response.body<ApiResponse<VercelDeployment>>().deployment
+                        ?: throw VercelApiException("No deployment data returned")
                 }
                 HttpStatusCode.Unauthorized -> {
                     val apiResponse = response.body<ApiResponse<VercelDeployment>>()
@@ -127,22 +123,18 @@ class VercelClientImpl(
 
                 // Get deployment files list
                 val response = withRetry {
-                    client.get("${config.apiUrl}/v13/deployments/${deployment.id}/files") {
+                    client.get("${config.apiUrl}/v6/deployments/${deployment.id}/files") {
                         config.teamId?.let { parameter("teamId", it) }
-                    }.body<ApiResponse<List<VercelFile>>>()
+                    }.body<ApiResponse<VercelFile>>()
                 }
 
-                val files = response.data ?: throw VercelApiException(
-                    response.error?.message ?: "No files data returned"
-                )
+                val files = response.files ?: throw VercelApiException("No files found in deployment")
 
-                // Download each file with parallel processing
+                // Download files recursively
                 coroutineScope {
                     files.map { file ->
                         async {
-                            val targetFile = File(targetDir, file.name)
-                            targetFile.parentFile.mkdirs()
-                            downloadFile(deployment.id, file.name, targetFile)
+                            downloadFileRecursively(deployment.id, file, targetDir)
                         }
                     }.awaitAll()
                 }
@@ -152,16 +144,31 @@ class VercelClientImpl(
         }
     }
 
+    private suspend fun downloadFileRecursively(deploymentId: String, file: VercelFile, targetDir: File) {
+        val targetPath = File(targetDir, file.name)
+        
+        when (file.fileType) {
+            "directory" -> {
+                targetPath.mkdirs()
+                file.children?.forEach { child ->
+                    downloadFileRecursively(deploymentId, child, targetPath)
+                }
+            }
+            "file" -> {
+                targetPath.parentFile.mkdirs()
+                downloadFile(deploymentId, file.name, targetPath)
+            }
+        }
+    }
+
     override suspend fun listDeployments(limit: Int): List<VercelDeployment> = withRetry {
         try {
-            val response = client.get("${config.apiUrl}/v13/deployments") {
+            val response = client.get("${config.apiUrl}/v6/deployments") {
                 config.teamId?.let { parameter("teamId", it) }
                 parameter("limit", limit)
-            }.body<ApiResponse<List<VercelDeployment>>>()
+            }.body<ApiResponse<VercelDeployment>>()
 
-            response.data ?: throw VercelApiException(
-                response.error?.message ?: "No deployments data returned"
-            )
+            response.deployments ?: throw VercelApiException("No deployments returned")
         } catch (e: ClientRequestException) {
             when (e.response.status) {
                 HttpStatusCode.Unauthorized -> {
@@ -182,9 +189,9 @@ class VercelClientImpl(
         }
     }
 
-    private suspend fun downloadFile(deploymentId: String, fileName: String, targetFile: File) = withRetry {
+    private suspend fun downloadFile(deploymentId: String, filePath: String, targetFile: File) = withRetry {
         try {
-            client.get("${config.apiUrl}/v13/deployments/$deploymentId/files/$fileName") {
+            client.get("${config.apiUrl}/v7/deployments/$deploymentId/files/$filePath") {
                 config.teamId?.let { parameter("teamId", it) }
             }.body<ByteArray>().let {
                 withContext(Dispatchers.IO) {
@@ -192,7 +199,7 @@ class VercelClientImpl(
                 }
             }
         } catch (e: Exception) {
-            throw VercelFileDownloadException("Failed to download file: $fileName", e)
+            throw VercelFileDownloadException("Failed to download file: $filePath", e)
         }
     }
 
