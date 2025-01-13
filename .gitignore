@@ -31,6 +31,7 @@ hs_err_pid*
 # Local configuration
 .env
 local.properties
+test.properties
 
 # Temp directory
 temp/

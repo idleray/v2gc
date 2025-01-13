@@ -1,0 +1,10 @@
+# Copy this file to test.properties and fill in the values
+# Required for integration tests
+VERCEL_TOKEN=your_vercel_token
+VERCEL_TEAM_ID=your_team_id
+TEST_DEPLOYMENT_ID=deployment_id_to_test
+
+# Optional test configuration
+TEST_TIMEOUT_SECONDS=60
+TEST_RETRY_ATTEMPTS=3
+TEST_RETRY_DELAY=1000 

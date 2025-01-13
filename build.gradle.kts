@@ -36,7 +36,37 @@ dependencies {
 }
 
 tasks.test {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags("integration")
+    }
+}
+
+// Create a separate task for integration tests
+val integrationTest by tasks.registering(Test::class) {
+    description = "Runs integration tests."
+    group = "verification"
+
+    useJUnitPlatform {
+        includeTags("integration")
+    }
+
+    // Load test.properties if it exists
+    val testPropertiesFile = file("src/test/resources/test.properties")
+    if (testPropertiesFile.exists()) {
+        val properties = java.util.Properties()
+        properties.load(testPropertiesFile.inputStream())
+        properties.forEach { (key, value) ->
+            systemProperty(key.toString(), value.toString())
+        }
+    }
+
+    // Always run after unit tests
+    shouldRunAfter(tasks.test)
+}
+
+// Add integration tests to check task
+tasks.check {
+    dependsOn(integrationTest)
 }
 
 kotlin {
