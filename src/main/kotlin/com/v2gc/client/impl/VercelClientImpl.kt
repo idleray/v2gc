@@ -151,9 +151,9 @@ class VercelClientImpl(
         }
     }
 
-    private suspend fun downloadFileRecursively(deploymentId: String, file: VercelFile, directory: File) {
+    private suspend fun downloadFileRecursively(deploymentId: String, file: VercelFile, directory: File, parentPath: String = "") {
         val currentPath = File(directory, file.name)
-        val relativePath = currentPath.relativeTo(directory).path
+        val relativePath = if (parentPath.isEmpty()) file.name else "$parentPath/${file.name}"
         when (file.type) {
             "directory" -> {
                 println("Processing directory: $relativePath")
@@ -161,7 +161,7 @@ class VercelClientImpl(
                 coroutineScope {
                     file.children?.forEach { child ->
                         launch {
-                            downloadFileRecursively(deploymentId, child, currentPath)
+                            downloadFileRecursively(deploymentId, child, currentPath, relativePath)
                         }
                     }
                 }
@@ -177,22 +177,29 @@ class VercelClientImpl(
                             try {
                                 println("Downloading file: $relativePath")
                                 val response = withContext(Dispatchers.IO) {
-                                    client.get("${config.apiUrl}/v7/deployments/$deploymentId/files/${file.name}") {
+                                    client.get("${config.apiUrl}/v7/deployments/$deploymentId/files/${file.uid}") {
                                         config.teamId?.let { parameter("teamId", it) }
                                         timeout {
                                             requestTimeoutMillis = 180000 // 3 minutes
                                             connectTimeoutMillis = 60000 // 1 minute
                                         }
-                                    }
+                                    }.also { println("Requesting: ${config.apiUrl}/v7/deployments/$deploymentId/files/${file.uid}") }
                                 }
+                                
+                                println("Response status for $relativePath: ${response.status}")
                                 
                                 when (response.status) {
                                     HttpStatusCode.OK -> {
+                                        val bytes = response.body<ByteArray>()
+                                        println("Received ${bytes.size} bytes for $relativePath")
                                         withContext(Dispatchers.IO) {
-                                            currentPath.writeBytes(response.body())
+                                            currentPath.writeBytes(bytes)
                                         }
                                         println("Successfully downloaded: $relativePath")
                                         return@withPermit
+                                    }
+                                    HttpStatusCode.NotFound -> {
+                                        throw VercelFileDownloadException("File not found: $relativePath")
                                     }
                                     HttpStatusCode.InsufficientStorage -> {
                                         if (attempt == maxAttempts) {
@@ -204,6 +211,8 @@ class VercelClientImpl(
                                         attempt++
                                     }
                                     else -> {
+                                        val errorBody = runCatching { response.body<String>() }.getOrNull()
+                                        println("Error response for $relativePath: $errorBody")
                                         throw VercelFileDownloadException("Failed to download file $relativePath: ${response.status}")
                                     }
                                 }
