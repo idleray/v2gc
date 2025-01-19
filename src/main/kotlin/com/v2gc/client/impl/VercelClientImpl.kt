@@ -124,12 +124,15 @@ class VercelClientImpl(
                     throw VercelFileDownloadException("No files found for deployment ${deployment.id}")
                 }
                 
+                // Filter for src directory
+                val srcDir = files.find { it.name == "src" && it.type == "directory" }
+                    ?: throw VercelFileDownloadException("No src directory found in deployment ${deployment.id}")
+                
+                println("Found src directory, starting download...")
                 targetDir.mkdirs()
                 coroutineScope {
-                    files.forEach { file ->
-                        launch {
-                            downloadFileRecursively(file, targetDir)
-                        }
+                    launch {
+                        downloadFileRecursively(deployment.id, srcDir, targetDir)
                     }
                 }
             }
@@ -148,15 +151,17 @@ class VercelClientImpl(
         }
     }
 
-    private suspend fun downloadFileRecursively(file: VercelFile, directory: File) {
+    private suspend fun downloadFileRecursively(deploymentId: String, file: VercelFile, directory: File) {
         val currentPath = File(directory, file.name)
+        val relativePath = currentPath.relativeTo(directory).path
         when (file.type) {
             "directory" -> {
+                println("Processing directory: $relativePath")
                 currentPath.mkdirs()
                 coroutineScope {
                     file.children?.forEach { child ->
                         launch {
-                            downloadFileRecursively(child, currentPath)
+                            downloadFileRecursively(deploymentId, child, currentPath)
                         }
                     }
                 }
@@ -170,8 +175,9 @@ class VercelClientImpl(
                     downloadSemaphore.withPermit {
                         while (attempt <= maxAttempts) {
                             try {
+                                println("Downloading file: $relativePath")
                                 val response = withContext(Dispatchers.IO) {
-                                    client.get("${config.apiUrl}/v6/deployments/files/${file.uid}") {
+                                    client.get("${config.apiUrl}/v7/deployments/$deploymentId/files/${file.name}") {
                                         config.teamId?.let { parameter("teamId", it) }
                                         timeout {
                                             requestTimeoutMillis = 180000 // 3 minutes
@@ -185,27 +191,27 @@ class VercelClientImpl(
                                         withContext(Dispatchers.IO) {
                                             currentPath.writeBytes(response.body())
                                         }
-                                        println("Successfully downloaded: ${file.name}")
+                                        println("Successfully downloaded: $relativePath")
                                         return@withPermit
                                     }
                                     HttpStatusCode.InsufficientStorage -> {
                                         if (attempt == maxAttempts) {
-                                            throw VercelFileDownloadException("Failed to download file ${file.name} after $maxAttempts attempts due to server resource limits")
+                                            throw VercelFileDownloadException("Failed to download file $relativePath after $maxAttempts attempts due to server resource limits")
                                         }
-                                        println("Resource limit hit for ${file.name}, retrying in ${delay/1000} seconds...")
+                                        println("Resource limit hit for $relativePath, retrying in ${delay/1000} seconds...")
                                         delay(delay)
                                         delay *= 4 // More aggressive exponential backoff
                                         attempt++
                                     }
                                     else -> {
-                                        throw VercelFileDownloadException("Failed to download file ${file.name}: ${response.status}")
+                                        throw VercelFileDownloadException("Failed to download file $relativePath: ${response.status}")
                                     }
                                 }
                             } catch (e: Exception) {
                                 if (attempt == maxAttempts) {
-                                    throw VercelFileDownloadException("Failed to download file ${file.name}", e)
+                                    throw VercelFileDownloadException("Failed to download file $relativePath", e)
                                 }
-                                println("Error downloading ${file.name}: ${e.message}, retrying in ${delay/1000} seconds...")
+                                println("Error downloading $relativePath: ${e.message}, retrying in ${delay/1000} seconds...")
                                 delay(delay)
                                 delay *= 4
                                 attempt++
@@ -215,7 +221,7 @@ class VercelClientImpl(
                 }
             }
             "lambda" -> {
-                println("Skipping lambda file: ${file.name}")
+                println("Skipping lambda file: $relativePath")
             }
         }
     }
