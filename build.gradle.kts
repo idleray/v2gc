@@ -22,6 +22,7 @@ dependencies {
     implementation("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
     implementation("io.ktor:ktor-client-logging:$ktorVersion")
     implementation("io.ktor:ktor-client-auth:$ktorVersion")
+    implementation("io.ktor:ktor-client-plugins:$ktorVersion")
 
     // Git
     implementation("org.eclipse.jgit:org.eclipse.jgit:6.8.0.202311291450-r")

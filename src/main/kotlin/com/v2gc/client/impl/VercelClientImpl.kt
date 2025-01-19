@@ -6,6 +6,7 @@ import com.v2gc.client.exception.VercelAuthenticationException
 import com.v2gc.client.exception.VercelFileDownloadException
 import com.v2gc.model.VercelConfig
 import com.v2gc.model.VercelDeployment
+import com.v2gc.model.VercelFile
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.cio.*
@@ -24,6 +25,7 @@ import kotlinx.serialization.json.Json
 import java.io.File
 import java.nio.file.Files
 import kotlin.time.Duration.Companion.milliseconds
+import java.util.concurrent.Semaphore
 
 @Serializable
 data class ApiResponse<T>(
@@ -40,15 +42,6 @@ data class ErrorResponse(
     val invalidToken: Boolean = false
 )
 
-@Serializable
-data class VercelFile(
-    val name: String,
-    val size: Long,
-    @SerialName("type")
-    val fileType: String,
-    val children: List<VercelFile>? = null
-)
-
 class VercelClientImpl(
     private val config: VercelConfig,
     private val httpClient: HttpClient? = null,
@@ -60,6 +53,8 @@ class VercelClientImpl(
             json(Json {
                 ignoreUnknownKeys = true
                 coerceInputValues = true
+                isLenient = true
+                prettyPrint = true
             })
         }
         install(Logging) {
@@ -76,10 +71,12 @@ class VercelClientImpl(
             contentType(ContentType.Application.Json)
         }
         install(HttpTimeout) {
-            requestTimeoutMillis = 30000
-            connectTimeoutMillis = 15000
+            requestTimeoutMillis = 60000
+            connectTimeoutMillis = 30000
         }
     }
+
+    private val downloadSemaphore = Semaphore(2) // Limit concurrent downloads
 
     override suspend fun getDeployment(deploymentId: String): VercelDeployment = withRetry {
         try {
@@ -116,47 +113,109 @@ class VercelClientImpl(
     }
 
     override suspend fun downloadSourceFiles(deployment: VercelDeployment, targetDir: File) {
-        withContext(Dispatchers.IO) {
-            try {
-                // Create target directory if it doesn't exist
+        val response = client.get("${config.apiUrl}/v6/deployments/${deployment.id}/files") {
+            config.teamId?.let { parameter("teamId", it) }
+        }
+
+        when (response.status) {
+            HttpStatusCode.OK -> {
+                val files = response.body<List<VercelFile>>()
+                if (files.isEmpty()) {
+                    throw VercelFileDownloadException("No files found for deployment ${deployment.id}")
+                }
+                
                 targetDir.mkdirs()
-
-                // Get deployment files list
-                val response = withRetry {
-                    client.get("${config.apiUrl}/v6/deployments/${deployment.id}/files") {
-                        config.teamId?.let { parameter("teamId", it) }
-                    }.body<ApiResponse<VercelFile>>()
-                }
-
-                val files = response.files ?: throw VercelApiException("No files found in deployment")
-
-                // Download files recursively
                 coroutineScope {
-                    files.map { file ->
-                        async {
-                            downloadFileRecursively(deployment.id, file, targetDir)
+                    files.forEach { file ->
+                        launch {
+                            downloadFileRecursively(file, targetDir)
                         }
-                    }.awaitAll()
+                    }
                 }
-            } catch (e: Exception) {
-                throw VercelFileDownloadException("Failed to download deployment files", e)
+            }
+            else -> {
+                throw VercelFileDownloadException("Failed to get deployment files: ${response.status}")
             }
         }
     }
+    
+    private suspend fun Semaphore.withPermit(block: suspend () -> Unit) {
+        try {
+            acquire()
+            block()
+        } finally {
+            release()
+        }
+    }
 
-    private suspend fun downloadFileRecursively(deploymentId: String, file: VercelFile, targetDir: File) {
-        val targetPath = File(targetDir, file.name)
-        
-        when (file.fileType) {
+    private suspend fun downloadFileRecursively(file: VercelFile, directory: File) {
+        val currentPath = File(directory, file.name)
+        when (file.type) {
             "directory" -> {
-                targetPath.mkdirs()
-                file.children?.forEach { child ->
-                    downloadFileRecursively(deploymentId, child, targetPath)
+                currentPath.mkdirs()
+                coroutineScope {
+                    file.children?.forEach { child ->
+                        launch {
+                            downloadFileRecursively(child, currentPath)
+                        }
+                    }
                 }
             }
             "file" -> {
-                targetPath.parentFile.mkdirs()
-                downloadFile(deploymentId, file.name, targetPath)
+                var attempt = 1
+                val maxAttempts = 5
+                var delay = 5000L // Start with 5 second delay
+                
+                withContext(Dispatchers.IO) {
+                    downloadSemaphore.withPermit {
+                        while (attempt <= maxAttempts) {
+                            try {
+                                val response = withContext(Dispatchers.IO) {
+                                    client.get("${config.apiUrl}/v6/deployments/files/${file.uid}") {
+                                        config.teamId?.let { parameter("teamId", it) }
+                                        timeout {
+                                            requestTimeoutMillis = 180000 // 3 minutes
+                                            connectTimeoutMillis = 60000 // 1 minute
+                                        }
+                                    }
+                                }
+                                
+                                when (response.status) {
+                                    HttpStatusCode.OK -> {
+                                        withContext(Dispatchers.IO) {
+                                            currentPath.writeBytes(response.body())
+                                        }
+                                        println("Successfully downloaded: ${file.name}")
+                                        return@withPermit
+                                    }
+                                    HttpStatusCode.InsufficientStorage -> {
+                                        if (attempt == maxAttempts) {
+                                            throw VercelFileDownloadException("Failed to download file ${file.name} after $maxAttempts attempts due to server resource limits")
+                                        }
+                                        println("Resource limit hit for ${file.name}, retrying in ${delay/1000} seconds...")
+                                        delay(delay)
+                                        delay *= 4 // More aggressive exponential backoff
+                                        attempt++
+                                    }
+                                    else -> {
+                                        throw VercelFileDownloadException("Failed to download file ${file.name}: ${response.status}")
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                if (attempt == maxAttempts) {
+                                    throw VercelFileDownloadException("Failed to download file ${file.name}", e)
+                                }
+                                println("Error downloading ${file.name}: ${e.message}, retrying in ${delay/1000} seconds...")
+                                delay(delay)
+                                delay *= 4
+                                attempt++
+                            }
+                        }
+                    }
+                }
+            }
+            "lambda" -> {
+                println("Skipping lambda file: ${file.name}")
             }
         }
     }
@@ -191,6 +250,7 @@ class VercelClientImpl(
 
     private suspend fun downloadFile(deploymentId: String, filePath: String, targetFile: File) = withRetry {
         try {
+            targetFile.parentFile.mkdirs()
             client.get("${config.apiUrl}/v7/deployments/$deploymentId/files/$filePath") {
                 config.teamId?.let { parameter("teamId", it) }
             }.body<ByteArray>().let {
