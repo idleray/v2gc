@@ -40,7 +40,9 @@ src/
 │   │   │   └── GitService.kt        # Business logic for git operations
 │   │   └── Application.kt           # Main application entry point
 │   └── resources/
-│       └── application.conf         # Configuration file
+│       ├── application.conf         # Main configuration file
+│       ├── secrets.conf            # Secret credentials (not in git)
+│       └── secrets.conf.template   # Template for secrets configuration
 ```
 
 ### Core Components
@@ -76,23 +78,39 @@ src/
 
 ### Configuration
 
-1. Create a `.env` file in the project root:
-```env
-VERCEL_TOKEN=your_vercel_token
-GITHUB_TOKEN=your_github_token
+1. Create `secrets.conf` from the template:
+```bash
+cp src/main/resources/secrets.conf.template src/main/resources/secrets.conf
 ```
 
-2. Configure application settings in `application.conf`:
+2. Edit `secrets.conf` with your credentials:
 ```hocon
 vercel {
-    apiUrl = "https://api.vercel.com"
-    teamId = "optional_team_id"
+    token = "your_vercel_token"
+    teamId = "your_team_id"  # Optional
 }
 
 git {
     authorName = "Your Name"
     authorEmail = "your.email@example.com"
+    token = "your_github_token"
+}
+```
+
+3. The main `application.conf` contains non-sensitive configuration:
+```hocon
+vercel {
+    apiUrl = "https://api.vercel.com"
+}
+
+git {
     defaultBranch = "main"
+}
+
+app {
+    tempDir = "temp"
+    retryAttempts = 3
+    retryDelay = 1000
 }
 ```
 
@@ -105,7 +123,7 @@ git {
 
 2. Run the application:
 ```bash
-./gradlew run --args="--deployment-id=your_deployment_id"
+./gradlew run
 ```
 
 ## Development

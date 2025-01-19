@@ -32,6 +32,8 @@ hs_err_pid*
 .env
 local.properties
 test.properties
+secrets.conf
+**/resources/secrets.conf
 
 # Temp directory
 temp/

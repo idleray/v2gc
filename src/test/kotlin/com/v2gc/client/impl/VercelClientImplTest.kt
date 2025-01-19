@@ -70,7 +70,7 @@ class VercelClientImplTest {
             assertEquals("Bearer ${config.token}", request.headers[HttpHeaders.Authorization])
             assertEquals("test-team", request.url.parameters["teamId"])
             respond(
-                content = json.encodeToString(ApiResponse(deployment)),
+                content = json.encodeToString(ApiResponse(deployment = deployment)),
                 status = HttpStatusCode.OK,
                 headers = headersOf(HttpHeaders.ContentType, "application/json")
             )
@@ -92,7 +92,7 @@ class VercelClientImplTest {
         mockEngine = MockEngine {
             respond(
                 content = json.encodeToString(ApiResponse<VercelDeployment>(
-                    error = ErrorResponse.Error("forbidden", "Not authorized", true)
+                    error = ErrorResponse("forbidden", "Not authorized", true)
                 )),
                 status = HttpStatusCode.Unauthorized,
                 headers = headersOf(HttpHeaders.ContentType, "application/json")
@@ -116,7 +116,7 @@ class VercelClientImplTest {
             if (attempts < 2) {
                 respond(
                     content = json.encodeToString(ApiResponse<VercelDeployment>(
-                        error = ErrorResponse.Error("error", "Internal Server Error")
+                        error = ErrorResponse("error", "Internal Server Error")
                     )),
                     status = HttpStatusCode.InternalServerError,
                     headers = headersOf(HttpHeaders.ContentType, "application/json")
@@ -147,7 +147,7 @@ class VercelClientImplTest {
             attempts++
             respond(
                 content = json.encodeToString(ApiResponse<VercelDeployment>(
-                    error = ErrorResponse.Error("error", "Internal Server Error")
+                    error = ErrorResponse("error", "Internal Server Error")
                 )),
                 status = HttpStatusCode.InternalServerError,
                 headers = headersOf(HttpHeaders.ContentType, "application/json")
@@ -168,7 +168,7 @@ class VercelClientImplTest {
         val deployments = listOf(createTestDeployment(), createTestDeployment().copy(id = "test-id-2"))
         mockEngine = MockEngine {
             respond(
-                content = json.encodeToString(ApiResponse(deployments)),
+                content = json.encodeToString(ApiResponse(deployments = deployments)),
                 status = HttpStatusCode.OK,
                 headers = headersOf(HttpHeaders.ContentType, "application/json")
             )
@@ -196,18 +196,15 @@ class VercelClientImplTest {
 
 @Serializable
 data class ApiResponse<T>(
-    val data: T? = null,
-    val error: ErrorResponse.Error? = null
+    val deployment: T? = null,
+    val deployments: List<T>? = null,
+    val files: List<T>? = null,
+    val error: ErrorResponse? = null
 )
 
 @Serializable
 data class ErrorResponse(
-    val error: Error
-) {
-    @Serializable
-    data class Error(
-        val code: String,
-        val message: String,
-        val invalidToken: Boolean = false
-    )
-} 
+    val code: String,
+    val message: String,
+    val invalidToken: Boolean = false
+) 
