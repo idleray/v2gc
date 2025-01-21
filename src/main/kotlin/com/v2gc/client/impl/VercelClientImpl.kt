@@ -26,6 +26,8 @@ import java.io.File
 import java.nio.file.Files
 import kotlin.time.Duration.Companion.milliseconds
 import java.util.concurrent.Semaphore
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.Base64
 
 @Serializable
 data class ApiResponse<T>(
@@ -40,6 +42,12 @@ data class ErrorResponse(
     val code: String,
     val message: String,
     val invalidToken: Boolean = false
+)
+
+// 添加数据类来解析响应
+@Serializable
+private data class FileResponse(
+    val data: String  // base64 encoded string
 )
 
 class VercelClientImpl(
@@ -76,7 +84,11 @@ class VercelClientImpl(
         }
     }
 
-    private val downloadSemaphore = Semaphore(2) // Limit concurrent downloads
+    private val downloadSemaphore = Semaphore(2).also {
+        println("Created download semaphore with 2 permits")
+    }
+
+    private var semaphoreCounter = AtomicInteger(0)
 
     override suspend fun getDeployment(deploymentId: String): VercelDeployment = withRetry {
         try {
@@ -154,84 +166,152 @@ class VercelClientImpl(
     private suspend fun downloadFileRecursively(deploymentId: String, file: VercelFile, directory: File, parentPath: String = "") {
         val currentPath = File(directory, file.name)
         val relativePath = if (parentPath.isEmpty()) file.name else "$parentPath/${file.name}"
+        
         when (file.type) {
             "directory" -> {
                 println("Processing directory: $relativePath")
                 currentPath.mkdirs()
-                coroutineScope {
-                    file.children?.forEach { child ->
-                        launch {
-                            downloadFileRecursively(deploymentId, child, currentPath, relativePath)
+                val filesToDownload = mutableListOf<Triple<VercelFile, File, String>>()
+                
+                fun collectFiles(vFile: VercelFile, dir: File, path: String) {
+                    when (vFile.type) {
+                        "directory" -> {
+                            val newDir = File(dir, vFile.name)
+                            newDir.mkdirs()
+                            // 递归处理子文件和子目录
+                            vFile.children?.forEach { child ->
+                                val newPath = if (path.isEmpty()) vFile.name else "$path/${vFile.name}"
+                                collectFiles(child, newDir, newPath)
+                            }
+                        }
+                        "file" -> {
+                            filesToDownload.add(Triple(vFile, dir, path))
                         }
                     }
                 }
-            }
-            "file" -> {
-                var attempt = 1
-                val maxAttempts = 5
-                var delay = 5000L // Start with 5 second delay
                 
-                withContext(Dispatchers.IO) {
-                    downloadSemaphore.withPermit {
-                        while (attempt <= maxAttempts) {
-                            try {
-                                println("Downloading file: $relativePath")
-                                val response = withContext(Dispatchers.IO) {
-                                    client.get("${config.apiUrl}/v7/deployments/$deploymentId/files/${file.uid}") {
-                                        config.teamId?.let { parameter("teamId", it) }
-                                        timeout {
-                                            requestTimeoutMillis = 180000 // 3 minutes
-                                            connectTimeoutMillis = 60000 // 1 minute
-                                        }
-                                    }.also { println("Requesting: ${config.apiUrl}/v7/deployments/$deploymentId/files/${file.uid}") }
+                // 收集当前目录下的文件
+                file.children?.forEach { child ->
+                    // 直接对当前目录的子项进行收集
+                    when (child.type) {
+                        "file" -> filesToDownload.add(Triple(child, currentPath, relativePath))
+                        "directory" -> collectFiles(child, currentPath, relativePath)
+                    }
+                }
+                
+                println("Total files to download in $relativePath: ${filesToDownload.size}")
+                
+                val batchSize = 2 // 减小批次大小，与信号量数量匹配
+                filesToDownload.chunked(batchSize).forEachIndexed { index, batch ->
+                    println("Processing batch ${index + 1}/${(filesToDownload.size + batchSize - 1) / batchSize} for $relativePath")
+                    
+                    coroutineScope {
+                        val results = batch.map { (vFile, dir, path) ->
+                            async {
+                                try {
+                                    downloadSingleFile(deploymentId, vFile, dir, path)
+                                    true
+                                } catch (e: Exception) {
+                                    println("Failed to download file: ${vFile.name}, error: ${e.message}")
+                                    false
                                 }
-                                
-                                println("Response status for $relativePath: ${response.status}")
-                                
-                                when (response.status) {
-                                    HttpStatusCode.OK -> {
-                                        val bytes = response.body<ByteArray>()
-                                        println("Received ${bytes.size} bytes for $relativePath")
-                                        withContext(Dispatchers.IO) {
-                                            currentPath.writeBytes(bytes)
-                                        }
-                                        println("Successfully downloaded: $relativePath")
-                                        return@withPermit
-                                    }
-                                    HttpStatusCode.NotFound -> {
-                                        throw VercelFileDownloadException("File not found: $relativePath")
-                                    }
-                                    HttpStatusCode.InsufficientStorage -> {
-                                        if (attempt == maxAttempts) {
-                                            throw VercelFileDownloadException("Failed to download file $relativePath after $maxAttempts attempts due to server resource limits")
-                                        }
-                                        println("Resource limit hit for $relativePath, retrying in ${delay/1000} seconds...")
-                                        delay(delay)
-                                        delay *= 4 // More aggressive exponential backoff
-                                        attempt++
-                                    }
-                                    else -> {
-                                        val errorBody = runCatching { response.body<String>() }.getOrNull()
-                                        println("Error response for $relativePath: $errorBody")
-                                        throw VercelFileDownloadException("Failed to download file $relativePath: ${response.status}")
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                if (attempt == maxAttempts) {
-                                    throw VercelFileDownloadException("Failed to download file $relativePath", e)
-                                }
-                                println("Error downloading $relativePath: ${e.message}, retrying in ${delay/1000} seconds...")
-                                delay(delay)
-                                delay *= 4
-                                attempt++
                             }
                         }
+                        // 等待当前批次的所有下载完成
+                        results.awaitAll()
                     }
+                    
+                    println("Completed batch ${index + 1} for $relativePath")
+                }
+            }
+            "file" -> {
+                val filesToDownload = listOf(Triple(file, directory, parentPath))
+                // 单个文件直接下载
+                try {
+                    downloadSingleFile(deploymentId, file, directory, parentPath)
+                } catch (e: Exception) {
+                    println("Failed to download file: ${file.name}, error: ${e.message}")
                 }
             }
             "lambda" -> {
                 println("Skipping lambda file: $relativePath")
             }
+        }
+    }
+
+    private suspend fun downloadSingleFile(deploymentId: String, file: VercelFile, directory: File, parentPath: String) {
+        val currentPath = File(directory, file.name)
+        val relativePath = if (parentPath.isEmpty()) file.name else "$parentPath/${file.name}"
+        
+        var attempt = 1
+        val maxAttempts = 5
+        var delay = 1000L
+        
+        try {
+            println("Waiting for semaphore permit: $relativePath (Current permits in use: ${semaphoreCounter.get()})")
+            downloadSemaphore.withPermit {
+                val currentCount = semaphoreCounter.incrementAndGet()
+                println("Acquired semaphore permit: $relativePath (Current permits in use: $currentCount)")
+                
+                try {
+                    while (attempt <= maxAttempts) {
+                        try {
+                            println("Downloading file (attempt $attempt/$maxAttempts): $relativePath")
+                            val response = withContext(Dispatchers.IO) {
+                                client.get("${config.apiUrl}/v7/deployments/$deploymentId/files/${file.uid}") {
+                                    config.teamId?.let { parameter("teamId", it) }
+                                    timeout {
+                                        requestTimeoutMillis = 30000
+                                        connectTimeoutMillis = 15000
+                                    }
+                                }
+                            }
+                            
+                            when (response.status) {
+                                HttpStatusCode.OK -> {
+                                    // 解析响应为 FileResponse
+                                    val fileResponse = response.body<FileResponse>()
+                                    // 解码 base64 数据
+                                    val bytes = Base64.getDecoder().decode(fileResponse.data)
+                                    withContext(Dispatchers.IO) {
+                                        currentPath.writeBytes(bytes)
+                                    }
+                                    println("Successfully downloaded: $relativePath (Size: ${bytes.size} bytes)")
+                                    return@withPermit
+                                }
+                                HttpStatusCode.TooManyRequests -> {
+                                    if (attempt == maxAttempts) {
+                                        throw VercelFileDownloadException("Rate limit exceeded for $relativePath after $maxAttempts attempts")
+                                    }
+                                    println("Rate limit hit for $relativePath, retrying in ${delay/1000} seconds...")
+                                    delay(delay)
+                                    delay *= 2
+                                    attempt++
+                                }
+                                else -> {
+                                    val errorBody = runCatching { response.body<String>() }.getOrNull()
+                                    println("Error response for $relativePath: $errorBody")
+                                    throw VercelFileDownloadException("Failed to download file $relativePath: ${response.status}")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            if (attempt == maxAttempts) {
+                                throw e
+                            }
+                            println("Error downloading $relativePath: ${e.message}, retrying in ${delay/1000} seconds...")
+                            delay(delay)
+                            delay *= 2
+                            attempt++
+                        }
+                    }
+                } finally {
+                    val currentCount = semaphoreCounter.decrementAndGet()
+                    println("Released semaphore permit: $relativePath (Current permits in use: $currentCount)")
+                }
+            }
+        } catch (e: Exception) {
+            println("Failed to download $relativePath after $maxAttempts attempts: ${e.message}")
+            throw e
         }
     }
 
@@ -294,5 +374,48 @@ class VercelClientImpl(
             }
         }
         throw lastException ?: VercelApiException("Operation failed after $retryAttempts attempts")
+    }
+
+    suspend fun testDownloadFile(deploymentId: String, fileId: String) {
+        println("Starting test download...")
+        println("DeploymentId: $deploymentId")
+        println("FileId: $fileId")
+
+        withContext(Dispatchers.IO) {
+            try {
+                val response = withContext(Dispatchers.IO) {
+                    client.get("${config.apiUrl}/v7/deployments/$deploymentId/files/$fileId") {
+                        config.teamId?.let { parameter("teamId", it) }
+                        timeout {
+                            requestTimeoutMillis = 180000 // 3 minutes
+                            connectTimeoutMillis = 60000 // 1 minute
+                        }
+                    }
+                }
+
+                println("Response received with status: ${response.status}")
+
+                when (response.status) {
+                    HttpStatusCode.OK -> {
+                        val bytes = response.body<ByteArray>()
+                        println("Successfully downloaded file. Size: ${bytes.size} bytes")
+                        // Save to a test file
+                        val testFile = File("test_download.txt")
+                        testFile.writeBytes(bytes)
+                        println("File saved to: ${testFile.absolutePath}")
+                    }
+
+                    else -> {
+                        val errorBody = runCatching { response.body<String>() }.getOrNull()
+                        println("Error response: $errorBody")
+                        println("Failed with status: ${response.status}")
+                    }
+                }
+            } catch (e: Exception) {
+                println("Exception occurred: ${e.javaClass.simpleName}")
+                println("Error message: ${e.message}")
+                e.printStackTrace()
+            }
+        }
     }
 } 
