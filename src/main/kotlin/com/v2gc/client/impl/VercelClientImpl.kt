@@ -201,8 +201,10 @@ class VercelClientImpl(
                 
                 println("Total files to download in $relativePath: ${filesToDownload.size}")
                 
-                val batchSize = 10 // 增加到 10 个并发
+                val startTime = System.currentTimeMillis()
+                val batchSize = 20
                 filesToDownload.chunked(batchSize).forEachIndexed { index, batch ->
+                    val batchStartTime = System.currentTimeMillis()
                     println("Processing batch ${index + 1}/${(filesToDownload.size + batchSize - 1) / batchSize} for $relativePath")
                     
                     coroutineScope {
@@ -220,16 +222,26 @@ class VercelClientImpl(
                         results.awaitAll()
                     }
                     
-                    println("Completed batch ${index + 1} for $relativePath")
+                    val batchEndTime = System.currentTimeMillis()
+                    val batchDuration = (batchEndTime - batchStartTime) / 1000.0
+                    println("Completed batch ${index + 1} for $relativePath (Batch time: ${String.format("%.2f", batchDuration)} seconds)")
                 }
+                
+                val endTime = System.currentTimeMillis()
+                val totalDuration = (endTime - startTime) / 1000.0
+                println("Completed downloading all files in $relativePath")
+                println("Total download time: ${String.format("%.2f", totalDuration)} seconds")
+                println("Average time per file: ${String.format("%.2f", totalDuration / filesToDownload.size)} seconds")
             }
             "file" -> {
-                val filesToDownload = listOf(Triple(file, directory, parentPath))
-                // 单个文件直接下载
+                val startTime = System.currentTimeMillis()
                 try {
                     downloadSingleFile(deploymentId, file, directory, parentPath)
+                    val duration = (System.currentTimeMillis() - startTime) / 1000.0
+                    println("Download completed for single file $relativePath (Time: ${String.format("%.2f", duration)} seconds)")
                 } catch (e: Exception) {
-                    println("Failed to download file: ${file.name}, error: ${e.message}")
+                    val duration = (System.currentTimeMillis() - startTime) / 1000.0
+                    println("Failed to download file: ${file.name}, error: ${e.message} (Time: ${String.format("%.2f", duration)} seconds)")
                 }
             }
             "lambda" -> {
