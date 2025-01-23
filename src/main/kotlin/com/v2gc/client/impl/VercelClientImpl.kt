@@ -316,8 +316,12 @@ class VercelClientImpl(
     override suspend fun listDeployments(limit: Int): List<VercelDeployment> = withRetry {
         try {
             val response = client.get("${config.apiUrl}/v6/deployments") {
-                config.teamId?.let { parameter("teamId", it) }
                 parameter("limit", limit)
+                parameter("projectId", config.projectName)
+                if (config.teamId != null) {
+                    parameter("teamId", config.teamId)
+                }
+                bearerAuth(config.token)
             }.body<ApiResponse<VercelDeployment>>()
 
             response.deployments ?: throw VercelApiException("No deployments returned")

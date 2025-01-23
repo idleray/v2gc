@@ -43,7 +43,8 @@ class Application(private val config: com.typesafe.config.Config) {
             val vercelConfig = VercelConfig(
                 apiUrl = "https://api.vercel.com",
                 token = config.getString("vercel.token"),
-                teamId = config.getString("vercel.teamId")
+                teamId = config.getString("vercel.teamId"),
+                projectName = config.getString("vercel.projectName")
             )
             val appConfig = AppConfig(
                 projectDir = config.getString("app.projectDir"),
@@ -73,7 +74,7 @@ class Application(private val config: com.typesafe.config.Config) {
             val vercelClient = VercelClientImpl(vercelConfig, httpClient)
 
             // Create deployment directory
-            val deploymentDir = File(appConfig.projectDir)
+            val deploymentDir = File(System.getProperty("java.io.tmpdir"), "vercel/${vercelConfig.projectName}")
             if (!deploymentDir.exists()) {
                 deploymentDir.mkdirs()
             }

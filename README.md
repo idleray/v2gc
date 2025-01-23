@@ -101,6 +101,7 @@ git {
 ```hocon
 vercel {
     apiUrl = "https://api.vercel.com"
+    projectName = "your-project-name"  # Add projectName configuration
 }
 
 git {

@@ -3,7 +3,8 @@ package com.v2gc.model
 data class VercelConfig(
     val apiUrl: String,
     val teamId: String? = null,
-    val token: String
+    val token: String,
+    val projectName: String
 )
 
 data class GitConfig(
