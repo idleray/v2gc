@@ -108,7 +108,7 @@ git {
 }
 
 app {
-    tempDir = "temp"
+    projectDir = "temp"
     retryAttempts = 3
     retryDelay = 1000
 }

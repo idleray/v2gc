@@ -14,7 +14,7 @@ data class GitConfig(
 )
 
 data class AppConfig(
-    val tempDir: String,
+    val projectDir: String,
     val retryAttempts: Int,
     val retryDelay: Long
 ) 

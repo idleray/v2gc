@@ -86,3 +86,8 @@ kotlin {
 application {
     mainClass.set("com.v2gc.ApplicationKt")
 }
+
+tasks.jar {
+    exclude("application.conf")
+    exclude("secrets.conf")
+}
