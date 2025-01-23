@@ -37,3 +37,4 @@ secrets.conf
 
 # Temp directory
 temp/
+.DS_Store
