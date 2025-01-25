@@ -15,8 +15,12 @@ import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.eclipse.jgit.api.Git
-import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
+import org.eclipse.jgit.transport.SshTransport
+import org.eclipse.jgit.transport.ssh.jsch.JschConfigSessionFactory
+import org.eclipse.jgit.transport.ssh.jsch.OpenSshConfig
+import org.eclipse.jgit.util.FS
 import java.io.File
+import com.jcraft.jsch.Session
 
 class GitHubClientImpl(
     private val config: GitHubConfig,
@@ -47,8 +51,7 @@ class GitHubClientImpl(
         }
     }
 
-    private val credentialsProvider = UsernamePasswordCredentialsProvider(config.token, "")
-    private val repoUrl = "https://github.com/${config.owner}/${config.repo}.git"
+    private val repoUrl = "git@github.com:${config.owner}/${config.repo}.git"
 
     @Serializable
     private data class CreateRepoRequest(
@@ -110,7 +113,15 @@ class GitHubClientImpl(
         Git.cloneRepository()
             .setURI(repoUrl)
             .setDirectory(directory)
-            .setCredentialsProvider(credentialsProvider)
+            .setTransportConfigCallback { transport ->
+                if (transport is SshTransport) {
+                    transport.sshSessionFactory = object : JschConfigSessionFactory() {
+                        override fun configure(host: OpenSshConfig.Host, session: Session) {
+                            session.setConfig("StrictHostKeyChecking", "no")
+                        }
+                    }
+                }
+            }
             .call()
     }
 } 
