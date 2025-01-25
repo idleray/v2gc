@@ -24,6 +24,7 @@ import com.jcraft.jsch.Session
 import org.eclipse.jgit.diff.DiffEntry
 import org.eclipse.jgit.treewalk.CanonicalTreeParser
 import org.eclipse.jgit.lib.ObjectReader
+import kotlinx.serialization.SerialName
 
 class GitHubClientImpl(
     private val config: GitHubConfig,
@@ -59,9 +60,13 @@ class GitHubClientImpl(
     @Serializable
     private data class CreateRepoRequest(
         val name: String,
-        val description: String? = null,
-        val private: Boolean = true,
-        val auto_init: Boolean = false
+        val description: String?,
+        @SerialName("private")
+        val private: Boolean,
+        @SerialName("auto_init")
+        val autoInit: Boolean,
+        @SerialName("visibility")
+        val visibility: String
     )
 
     @Serializable
@@ -85,14 +90,23 @@ class GitHubClientImpl(
     }
 
     override suspend fun createRepository(): String {
+        val createRequest = CreateRepoRequest(
+            name = config.repo,
+            description = "Migrated from Vercel",
+            private = true,
+            autoInit = false,
+            visibility = "private"
+        )
+        
+        println("Creating repository with request: ${Json.encodeToString(CreateRepoRequest.serializer(), createRequest)}")
+        
         val response = client.post("user/repos") {
             contentType(ContentType.Application.Json)
-            setBody(CreateRepoRequest(
-                name = config.repo,
-                description = "Migrated from Vercel",
-                private = true
-            ))
+            setBody(createRequest)
         }
+
+        println("GitHub API response status: ${response.status}")
+        println("GitHub API response body: ${response.body<String>()}")
 
         when (response.status) {
             HttpStatusCode.Created -> {
