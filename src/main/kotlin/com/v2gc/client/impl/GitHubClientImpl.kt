@@ -24,20 +24,23 @@ import com.jcraft.jsch.Session
 import org.eclipse.jgit.diff.DiffEntry
 import org.eclipse.jgit.treewalk.CanonicalTreeParser
 import org.eclipse.jgit.lib.ObjectReader
-import kotlinx.serialization.SerialName
 
 class GitHubClientImpl(
     private val config: GitHubConfig,
     private val httpClient: HttpClient? = null
 ) : GitHubClient {
 
+    private val json = Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+        isLenient = true
+        encodeDefaults = true
+        explicitNulls = false
+    }
+
     private val client = (httpClient ?: HttpClient(CIO)).config {
         install(ContentNegotiation) {
-            json(Json {
-                ignoreUnknownKeys = true
-                coerceInputValues = true
-                isLenient = true
-            })
+            json(json)
         }
         install(Auth) {
             bearer {
@@ -61,11 +64,8 @@ class GitHubClientImpl(
     private data class CreateRepoRequest(
         val name: String,
         val description: String?,
-        @SerialName("private")
         val private: Boolean,
-        @SerialName("auto_init")
-        val autoInit: Boolean,
-        @SerialName("visibility")
+        val auto_init: Boolean,
         val visibility: String
     )
 
@@ -94,19 +94,16 @@ class GitHubClientImpl(
             name = config.repo,
             description = "Migrated from Vercel",
             private = true,
-            autoInit = false,
+            auto_init = false,
             visibility = "private"
         )
         
-        println("Creating repository with request: ${Json.encodeToString(CreateRepoRequest.serializer(), createRequest)}")
+//        println("Creating repository with request: ${json.encodeToString(CreateRepoRequest.serializer(), createRequest)}")
         
         val response = client.post("user/repos") {
             contentType(ContentType.Application.Json)
             setBody(createRequest)
         }
-
-        println("GitHub API response status: ${response.status}")
-        println("GitHub API response body: ${response.body<String>()}")
 
         when (response.status) {
             HttpStatusCode.Created -> {
