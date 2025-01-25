@@ -78,40 +78,36 @@ src/
 
 ### Configuration
 
-1. Create `secrets.conf` from the template:
-```bash
-cp src/main/resources/secrets.conf.template src/main/resources/secrets.conf
-```
+The application uses two configuration files:
 
-2. Edit `secrets.conf` with your credentials:
-```hocon
-vercel {
-    token = "your_vercel_token"
-    teamId = "your_team_id"  # Optional
-}
-
-git {
-    authorName = "Your Name"
-    authorEmail = "your.email@example.com"
-    token = "your_github_token"
-}
-```
-
-3. The main `application.conf` contains non-sensitive configuration:
+1. `application.conf` - Contains non-sensitive configuration:
 ```hocon
 vercel {
     apiUrl = "https://api.vercel.com"
-    projectName = "your-project-name"  # Add projectName configuration
+    projectName = "your-project-name"
 }
 
-git {
-    defaultBranch = "main"
+github {
+    owner = "your-github-username"
+    repo = "your-repo-name"
 }
 
 app {
-    projectDir = "temp"
+    projectRootDir = "/path/to/projects"
     retryAttempts = 3
     retryDelay = 1000
+}
+```
+
+2. `secrets.conf` - Contains sensitive configuration (not committed to git):
+```hocon
+vercel {
+    token = "your-vercel-token"
+    teamId = "your-team-id"  # Optional
+}
+
+github {
+    token = "your-github-token"
 }
 ```
 
