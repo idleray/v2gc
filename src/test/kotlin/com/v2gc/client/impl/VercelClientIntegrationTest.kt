@@ -32,9 +32,10 @@ class VercelClientIntegrationTest {
         }
 
         config = VercelConfig(
-            apiUrl = "https://api.vercel.com",
-            token = properties.getProperty("VERCEL_TOKEN"),
-            teamId = properties.getProperty("VERCEL_TEAM_ID")
+            apiUrl = System.getProperty("vercel.apiUrl", "https://api.vercel.com"),
+            token = System.getProperty("vercel.token") ?: throw IllegalStateException("Vercel token not set"),
+            teamId = System.getProperty("vercel.teamId"),
+            projectName = System.getProperty("vercel.projectName") ?: "test-project"
         )
 
         httpClient = HttpClient(CIO) {
@@ -94,7 +95,8 @@ class VercelClientIntegrationTest {
             VercelConfig(
                 apiUrl = "https://api.vercel.com",
                 token = "invalid_token",
-                teamId = "invalid_team"
+                teamId = "invalid_team",
+                projectName = "test-project"
             ),
             invalidHttpClient
         )

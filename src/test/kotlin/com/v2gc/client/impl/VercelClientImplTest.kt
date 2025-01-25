@@ -34,9 +34,10 @@ class VercelClientImplTest {
     private lateinit var mockEngine: MockEngine
     private lateinit var client: VercelClientImpl
     private val config = VercelConfig(
+        apiUrl = "https://api.vercel.com",
         token = "test-token",
         teamId = "test-team",
-        apiUrl = "http://localhost"  // Changed to match the mock server URL
+        projectName = "test-project"
     )
     private val json = Json { 
         ignoreUnknownKeys = true 
