@@ -84,9 +84,19 @@ class Application(private val config: com.typesafe.config.Config) {
             // Initialize GitHub client
             val githubClient = GitHubClientImpl(githubConfig)
 
+            // Fetch latest deployment
+            println("Fetching latest deployment...")
+            val deployments = vercelClient.listDeployments(limit = 1)
+            if (deployments.isEmpty()) {
+                throw RuntimeException("No deployments found")
+            }
+            val latestDeployment = deployments.first()
+            println("Latest deployment: ${latestDeployment.id} (${latestDeployment.url})")
+
             // Prepare directories
             val vercelDir = File(appConfig.projectRootDir, vercelConfig.projectName)
-            val tempDir = File(System.getProperty("java.io.tmpdir"), "vercel/${vercelConfig.projectName}")
+            val tempDir = File(System.getProperty("java.io.tmpdir"), 
+                "vercel/${vercelConfig.projectName}/${latestDeployment.id}")
 
             // Check directory and repository status
             val vercelDirExists = vercelDir.exists()
@@ -117,15 +127,6 @@ class Application(private val config: com.typesafe.config.Config) {
                     File(vercelDir, "src").deleteRecursively()
                 }
             }
-
-            // Fetch latest deployment
-            println("Fetching latest deployment...")
-            val deployments = vercelClient.listDeployments(limit = 1)
-            if (deployments.isEmpty()) {
-                throw RuntimeException("No deployments found")
-            }
-            val latestDeployment = deployments.first()
-            println("Latest deployment: ${latestDeployment.id} (${latestDeployment.url})")
 
             // Download Vercel files to temp directory
             println("Downloading source files...")
@@ -184,4 +185,4 @@ class Application(private val config: com.typesafe.config.Config) {
             System.exit(1)
         }
     }
-} 
+}
