@@ -23,5 +23,5 @@ data class AppConfig(
 data class GitHubConfig(
     val token: String,
     val owner: String,
-    val repo: String
+    val repo: String  // This will be set from vercel.projectName
 ) 

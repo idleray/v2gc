@@ -57,7 +57,7 @@ class Application(private val config: com.typesafe.config.Config) {
             val githubConfig = GitHubConfig(
                 token = config.getString("github.token"),
                 owner = config.getString("github.owner"),
-                repo = config.getString("github.repo")
+                repo = vercelConfig.projectName
             )
 
             // Initialize HTTP client

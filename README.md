@@ -84,12 +84,11 @@ The application uses two configuration files:
 ```hocon
 vercel {
     apiUrl = "https://api.vercel.com"
-    projectName = "your-project-name"
+    projectName = "your-project-name"  # This will also be used as GitHub repository name
 }
 
 github {
     owner = "your-github-username"
-    repo = "your-repo-name"
 }
 
 app {

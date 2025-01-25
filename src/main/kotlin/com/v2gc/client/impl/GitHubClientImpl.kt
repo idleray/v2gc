@@ -50,6 +50,21 @@ class GitHubClientImpl(
     private val credentialsProvider = UsernamePasswordCredentialsProvider(config.token, "")
     private val repoUrl = "https://github.com/${config.owner}/${config.repo}.git"
 
+    @Serializable
+    private data class CreateRepoRequest(
+        val name: String,
+        val description: String? = null,
+        val private: Boolean = true,
+        val auto_init: Boolean = false
+    )
+
+    @Serializable
+    private data class CreateRepoResponse(
+        val html_url: String,
+        val clone_url: String,
+        val ssh_url: String
+    )
+
     override suspend fun repositoryExists(): Boolean {
         return try {
             val response = client.get("repos/${config.owner}/${config.repo}")
@@ -64,9 +79,31 @@ class GitHubClientImpl(
     }
 
     override suspend fun createRepository(): String {
-        // Implementation to create new repository using GitHub API
-        // TODO: Implement actual API call
-        return ""
+        val response = client.post("user/repos") {
+            contentType(ContentType.Application.Json)
+            setBody(CreateRepoRequest(
+                name = config.repo,
+                description = "Migrated from Vercel",
+                private = true
+            ))
+        }
+
+        when (response.status) {
+            HttpStatusCode.Created -> {
+                val repoResponse = response.body<CreateRepoResponse>()
+                println("Created repository: ${repoResponse.html_url}")
+                return repoResponse.html_url
+            }
+            HttpStatusCode.Unauthorized -> {
+                throw IllegalStateException("GitHub authentication failed. Please check your token.")
+            }
+            HttpStatusCode.UnprocessableEntity -> {
+                throw IllegalStateException("Repository already exists or name is invalid.")
+            }
+            else -> {
+                throw IllegalStateException("Failed to create repository: ${response.status}")
+            }
+        }
     }
 
     override fun cloneRepository(directory: File) {
