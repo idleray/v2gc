@@ -21,6 +21,9 @@ import org.eclipse.jgit.transport.ssh.jsch.OpenSshConfig
 import org.eclipse.jgit.util.FS
 import java.io.File
 import com.jcraft.jsch.Session
+import org.eclipse.jgit.diff.DiffEntry
+import org.eclipse.jgit.treewalk.CanonicalTreeParser
+import org.eclipse.jgit.lib.ObjectReader
 
 class GitHubClientImpl(
     private val config: GitHubConfig,
@@ -127,10 +130,31 @@ class GitHubClientImpl(
 
     override fun commitAndPush(directory: File, deploymentId: String) {
         Git.open(directory).use { git ->
-            // Add all files
+            // Add all files to index
             git.add()
                 .addFilepattern(".")
                 .call()
+
+            // Get repository status
+            val status = git.status().call()
+            
+            // Check if there are any changes
+            val hasChanges = status.hasUncommittedChanges() || 
+                status.added.isNotEmpty() || 
+                status.changed.isNotEmpty() || 
+                status.removed.isNotEmpty()
+
+            if (!hasChanges) {
+                println("No changes detected, skipping commit and push")
+                return
+            }
+
+            // Print changes summary
+            println("Changes detected:")
+            status.added.forEach { println("ADD $it") }
+            status.changed.forEach { println("MODIFY $it") }
+            status.removed.forEach { println("DELETE $it") }
+            status.untracked.forEach { println("UNTRACKED $it") }
 
             // Commit
             val message = "Vercel to github deployment id: $deploymentId"
