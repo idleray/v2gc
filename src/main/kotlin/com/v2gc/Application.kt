@@ -88,24 +88,31 @@ class Application(private val config: com.typesafe.config.Config) {
             val vercelDir = File(appConfig.projectRootDir, vercelConfig.projectName)
             val tempDir = File(System.getProperty("java.io.tmpdir"), "vercel/${vercelConfig.projectName}")
 
+            // Check directory and repository status
+            val vercelDirExists = vercelDir.exists()
+            val repoExists = githubClient.repositoryExists()
+
+            println("Vercel directory exists: $vercelDirExists")
+            println("GitHub repository exists: $repoExists")
+
             // Handle directory setup based on conditions
             when {
-                !vercelDir.exists() && !githubClient.repositoryExists() -> {
+                !vercelDirExists && !repoExists -> {
                     println("Creating new GitHub repository and cloning to $vercelDir")
                     githubClient.createRepository()
                     githubClient.cloneRepository(vercelDir)
                 }
-                !vercelDir.exists() && githubClient.repositoryExists() -> {
+                !vercelDirExists && repoExists -> {
                     println("Cloning existing GitHub repository to $vercelDir")
                     githubClient.cloneRepository(vercelDir)
                 }
-                vercelDir.exists() && !githubClient.repositoryExists() -> {
+                vercelDirExists && !repoExists -> {
                     println("Deleting existing vercelDir and creating new GitHub repository")
                     vercelDir.deleteRecursively()
                     githubClient.createRepository()
                     githubClient.cloneRepository(vercelDir)
                 }
-                vercelDir.exists() && githubClient.repositoryExists() -> {
+                vercelDirExists && repoExists -> {
                     println("Cleaning src directory in existing vercelDir")
                     File(vercelDir, "src").deleteRecursively()
                 }
