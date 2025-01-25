@@ -14,6 +14,9 @@ import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
+import java.io.File
 
 class GitHubClientImpl(
     private val config: GitHubConfig,
@@ -44,9 +47,12 @@ class GitHubClientImpl(
         }
     }
 
-    override suspend fun repositoryExists(name: String): Boolean {
+    private val credentialsProvider = UsernamePasswordCredentialsProvider(config.token, "")
+    private val repoUrl = "https://github.com/${config.owner}/${config.repo}.git"
+
+    override suspend fun repositoryExists(): Boolean {
         return try {
-            val response = client.get("repos/${config.owner}/$name")
+            val response = client.get("repos/${config.owner}/${config.repo}")
             response.status == HttpStatusCode.OK
         } catch (e: ClientRequestException) {
             if (e.response.status == HttpStatusCode.NotFound) {
@@ -57,24 +63,17 @@ class GitHubClientImpl(
         }
     }
 
-    override suspend fun createRepository(name: String, description: String?, isPrivate: Boolean): String {
-        @Serializable
-        data class CreateRepoRequest(
-            val name: String,
-            val description: String? = null,
-            val private: Boolean = true
-        )
+    override suspend fun createRepository(): String {
+        // Implementation to create new repository using GitHub API
+        // TODO: Implement actual API call
+        return ""
+    }
 
-        @Serializable
-        data class CreateRepoResponse(
-            val html_url: String
-        )
-
-        val response = client.post("user/repos") {
-            contentType(ContentType.Application.Json)
-            setBody(CreateRepoRequest(name, description, isPrivate))
-        }
-
-        return response.body<CreateRepoResponse>().html_url
+    override fun cloneRepository(directory: File) {
+        Git.cloneRepository()
+            .setURI(repoUrl)
+            .setDirectory(directory)
+            .setCredentialsProvider(credentialsProvider)
+            .call()
     }
 } 

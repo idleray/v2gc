@@ -1,8 +1,10 @@
 package com.v2gc
 
 import com.typesafe.config.ConfigFactory
+import com.v2gc.client.impl.GitHubClientImpl
 import com.v2gc.client.impl.VercelClientImpl
 import com.v2gc.model.AppConfig
+import com.v2gc.model.GitHubConfig
 import com.v2gc.model.VercelConfig
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
@@ -47,9 +49,15 @@ class Application(private val config: com.typesafe.config.Config) {
                 projectName = config.getString("vercel.projectName")
             )
             val appConfig = AppConfig(
-                projectDir = config.getString("app.projectDir"),
+                projectRootDir = config.getString("app.projectRootDir"),
                 retryAttempts = config.getInt("app.retryAttempts"),
                 retryDelay = config.getLong("app.retryDelay")
+            )
+
+            val githubConfig = GitHubConfig(
+                token = config.getString("github.token"),
+                owner = config.getString("github.owner"),
+                repo = config.getString("github.repo")
             )
 
             // Initialize HTTP client
@@ -73,10 +81,34 @@ class Application(private val config: com.typesafe.config.Config) {
             // Initialize Vercel client
             val vercelClient = VercelClientImpl(vercelConfig, httpClient)
 
-            // Create deployment directory
-            val deploymentDir = File(System.getProperty("java.io.tmpdir"), "vercel/${vercelConfig.projectName}")
-            if (!deploymentDir.exists()) {
-                deploymentDir.mkdirs()
+            // Initialize GitHub client
+            val githubClient = GitHubClientImpl(githubConfig)
+
+            // Prepare directories
+            val vercelDir = File(appConfig.projectRootDir, vercelConfig.projectName)
+            val tempDir = File(System.getProperty("java.io.tmpdir"), "vercel/${vercelConfig.projectName}")
+
+            // Handle directory setup based on conditions
+            when {
+                !vercelDir.exists() && !githubClient.repositoryExists() -> {
+                    println("Creating new GitHub repository and cloning to $vercelDir")
+                    githubClient.createRepository()
+                    githubClient.cloneRepository(vercelDir)
+                }
+                !vercelDir.exists() && githubClient.repositoryExists() -> {
+                    println("Cloning existing GitHub repository to $vercelDir")
+                    githubClient.cloneRepository(vercelDir)
+                }
+                vercelDir.exists() && !githubClient.repositoryExists() -> {
+                    println("Deleting existing vercelDir and creating new GitHub repository")
+                    vercelDir.deleteRecursively()
+                    githubClient.createRepository()
+                    githubClient.cloneRepository(vercelDir)
+                }
+                vercelDir.exists() && githubClient.repositoryExists() -> {
+                    println("Cleaning src directory in existing vercelDir")
+                    File(vercelDir, "src").deleteRecursively()
+                }
             }
 
             // Fetch latest deployment
@@ -88,10 +120,16 @@ class Application(private val config: com.typesafe.config.Config) {
             val latestDeployment = deployments.first()
             println("Latest deployment: ${latestDeployment.id} (${latestDeployment.url})")
 
-            // Download source files
+            // Download Vercel files to temp directory
             println("Downloading source files...")
-            vercelClient.downloadSourceFiles(latestDeployment, deploymentDir)
-            println("Source files downloaded to ${deploymentDir.absolutePath}")
+            vercelClient.downloadSourceFiles(latestDeployment, tempDir)
+
+            // Copy files from temp to vercel directory
+            println("Copying files to $vercelDir")
+            tempDir.copyRecursively(vercelDir, overwrite = true)
+            tempDir.deleteRecursively()
+
+            println("Source files processed in ${vercelDir.absolutePath}")
 
             /* Commenting out Git workflow for now
             // Initialize Git client

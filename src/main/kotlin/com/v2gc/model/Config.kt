@@ -15,7 +15,13 @@ data class GitConfig(
 )
 
 data class AppConfig(
-    val projectDir: String,
+    val projectRootDir: String,
     val retryAttempts: Int,
     val retryDelay: Long
+)
+
+data class GitHubConfig(
+    val token: String,
+    val owner: String,
+    val repo: String
 ) 

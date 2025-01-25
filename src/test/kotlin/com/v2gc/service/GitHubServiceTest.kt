@@ -3,7 +3,9 @@ package com.v2gc.service
 import com.v2gc.client.GitHubClient
 import com.v2gc.client.VercelClient
 import com.v2gc.model.VercelDeployment
+import com.v2gc.model.GitHubConfig
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -11,9 +13,38 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 
 class GitHubServiceTest {
-    private val githubClient = mockk<GitHubClient>()
-    private val vercelClient = mockk<VercelClient>()
-    private val service = GitHubService(githubClient, vercelClient)
+    private val mockClient = mockk<GitHubClient>()
+    private val config = GitHubConfig(
+        token = "test-token",
+        owner = "test-owner",
+        repo = "test-repo"
+    )
+    private val service = GitHubService(mockClient, config)
+
+    @Test
+    fun `ensureRepositoryExists creates repository when it doesn't exist`() = runBlocking {
+        coEvery { mockClient.repositoryExists() } returns false
+        coEvery { mockClient.createRepository() } returns Unit
+
+        service.ensureRepositoryExists()
+
+        coVerify { 
+            mockClient.repositoryExists()
+            mockClient.createRepository()
+        }
+    }
+
+    @Test
+    fun `ensureRepositoryExists does nothing when repository exists`() = runBlocking {
+        coEvery { mockClient.repositoryExists() } returns true
+
+        service.ensureRepositoryExists()
+
+        coVerify { 
+            mockClient.repositoryExists()
+            mockClient.createRepository() wasNot Called
+        }
+    }
 
     @Test
     fun `ensureGitHubRepository creates repository when it doesn't exist`() = runBlocking {
@@ -26,17 +57,15 @@ class GitHubServiceTest {
             state = "READY"
         )
 
-        coEvery { githubClient.repositoryExists("test-project") } returns false
-        coEvery { 
-            githubClient.createRepository(
-                "test-project", 
-                "Migrated from Vercel deployment: https://test.vercel.app",
-                true
-            )
-        } returns "https://github.com/owner/test-project"
+        coEvery { mockClient.repositoryExists() } returns false
+        coEvery { mockClient.createRepository() } returns Unit
 
-        val result = service.ensureGitHubRepository(deployment)
-        assertEquals("https://github.com/owner/test-project", result)
+        service.ensureGitHubRepository(deployment)
+
+        coVerify { 
+            mockClient.repositoryExists()
+            mockClient.createRepository()
+        }
     }
 
     @Test
@@ -50,7 +79,7 @@ class GitHubServiceTest {
             state = "READY"
         )
 
-        coEvery { githubClient.repositoryExists("test-project") } returns true
+        coEvery { mockClient.repositoryExists() } returns true
 
         val result = service.ensureGitHubRepository(deployment)
         assertEquals("https://github.com/test-project", result)
