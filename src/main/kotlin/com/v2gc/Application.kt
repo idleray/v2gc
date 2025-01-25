@@ -139,41 +139,9 @@ class Application(private val config: com.typesafe.config.Config) {
 
             println("Source files processed in ${vercelDir.absolutePath}")
 
-            /* Commenting out Git workflow for now
-            // Initialize Git client
-            val gitConfig = GitConfig(
-                authorName = config.getString("git.authorName"),
-                authorEmail = config.getString("git.authorEmail"),
-                defaultBranch = config.getString("git.defaultBranch"),
-                token = config.getString("git.token")
-            )
-            val gitClient = GitClientImpl()
-            gitClient.setAuthor(gitConfig.authorName, gitConfig.authorEmail)
-            gitClient.setCredentials("oauth2", gitConfig.token)
-
-            // Initialize Git repository
-            println("Initializing Git repository...")
-            gitClient.initRepository(deploymentDir)
-
-            // Add all files to Git
-            println("Adding files to Git...")
-            val filesToAdd = deploymentDir.walk()
-                .filter { it.isFile && !it.path.contains("/.git/") }
-                .toList()
-            gitClient.addFiles(filesToAdd)
-
-            // Commit changes
-            println("Committing changes...")
-            val commitMessage = "Update from Vercel deployment ${latestDeployment.id}\n\n" +
-                    "Deployment URL: ${latestDeployment.url}\n" +
-                    "Created at: ${latestDeployment.createdAt}"
-            gitClient.commit(commitMessage)
-
-            // Push changes
-            println("Pushing changes...")
-            gitClient.push(gitConfig.defaultBranch)
-            println("Changes pushed to ${gitConfig.defaultBranch}")
-            */
+            // Commit and push changes
+            println("Committing and pushing changes...")
+            githubClient.commitAndPush(vercelDir, latestDeployment.id)
 
             // Cleanup
             httpClient.close()

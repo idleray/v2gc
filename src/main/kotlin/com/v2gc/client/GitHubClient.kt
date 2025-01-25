@@ -15,4 +15,6 @@ interface GitHubClient {
     suspend fun createRepository(): String
 
     fun cloneRepository(directory: File)
+
+    fun commitAndPush(directory: File, deploymentId: String)
 } 

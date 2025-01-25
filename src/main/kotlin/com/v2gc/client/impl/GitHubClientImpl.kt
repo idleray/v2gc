@@ -124,4 +124,34 @@ class GitHubClientImpl(
             }
             .call()
     }
+
+    override fun commitAndPush(directory: File, deploymentId: String) {
+        Git.open(directory).use { git ->
+            // Add all files
+            git.add()
+                .addFilepattern(".")
+                .call()
+
+            // Commit
+            val message = "Vercel to github deployment id: $deploymentId"
+            git.commit()
+                .setMessage(message)
+                .call()
+
+            // Push to main branch
+            git.push()
+                .setTransportConfigCallback { transport ->
+                    if (transport is SshTransport) {
+                        transport.sshSessionFactory = object : JschConfigSessionFactory() {
+                            override fun configure(host: OpenSshConfig.Host, session: Session) {
+                                session.setConfig("StrictHostKeyChecking", "no")
+                            }
+                        }
+                    }
+                }
+                .call()
+
+            println("Changes committed and pushed to main branch")
+        }
+    }
 } 
