@@ -3,17 +3,17 @@ include "secrets.conf"
 
 vercel {
     apiUrl = "https://api.vercel.com"
-    projectName = "v0-toolhub24"  # This will also be used as GitHub repository name
+    projectName = "your vercel project name"  # This will also be used as GitHub repository name
     # Token and teamId are loaded from secrets.conf
 }
 
 github {
     # Token is loaded from secrets.conf
-    owner = "idleray"
+    owner = "your github account"
 }
 
 app {
-    projectRootDir = "/Users/tanglei/temp/v2gc"
+    projectRootDir = "git repo directory"
     retryAttempts = 3
     retryDelay = 1000
 } 

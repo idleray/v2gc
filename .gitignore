@@ -34,6 +34,7 @@ local.properties
 test.properties
 secrets.conf
 **/resources/secrets.conf
+**/resources/application.conf
 
 # Temp directory
 temp/
