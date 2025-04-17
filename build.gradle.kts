@@ -1,6 +1,6 @@
 plugins {
-    kotlin("jvm") version "1.9.22"
-    kotlin("plugin.serialization") version "1.9.22"
+    kotlin("jvm") version "2.1.20"
+    kotlin("plugin.serialization") version "2.1.20"
     application
 }
 
@@ -84,7 +84,7 @@ tasks.check {
 }
 
 kotlin {
-    jvmToolchain(11)
+    jvmToolchain(23)
 }
 
 application {
